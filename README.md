@@ -12,19 +12,45 @@ Open [@MeetomaticBot](https://t.me/MeetomaticBot) in Telegram and follow the pro
 
 ## Running your own instance
 
-You need Python 3.11 or newer, the system time zone database (such as `tzdata` on Linux), and network access to Telegram. There are no third-party Python dependencies. For the Mini App, you also need a public HTTPS origin and reverse proxy.
+You need Python 3.11 or newer on a Unix-like system (Linux or macOS), the system time zone database (such as `tzdata` on Linux), and outbound HTTPS access to `api.telegram.org`. There are no third-party Python dependencies. The Mini App also needs a public HTTPS origin and a reverse proxy.
 
-1. Create a bot with [@BotFather](https://t.me/BotFather) and add it to your Telegram group.
-2. Copy `.env.example` to `.env`, set `TELEGRAM_BOT_TOKEN`, and restrict access with `chmod 600 .env`. Never commit this file or your SQLite database.
-3. Set `WEBAPP_URL` to your HTTPS origin to enable the Mini App. Configure your reverse proxy to forward requests to the configured `WEB_HOST` and `WEB_PORT`. The files in `deploy/` are examples; replace the domain, paths, and service user before using them.
-4. Run the checks and start one polling process for the token:
+Check `python3 --version` first. If it points to an older Python, use the command for your Python 3.11+ installation in place of `python3` below (and update `ExecStart` if using the example systemd service).
+
+1. Create a bot with [@BotFather](https://t.me/BotFather), copy its token, and add the bot to your Telegram group with permission to send messages. The person connecting the group must be a group administrator.
+2. Download the project and create a private configuration file:
+
+   ```sh
+   git clone https://github.com/starPaw/meetomatic.git
+   cd meetomatic
+   cp .env.example .env
+   chmod 600 .env
+   ```
+
+3. Edit `.env` and set `TELEGRAM_BOT_TOKEN` to the token from BotFather. For the Mini App, set `WEBAPP_URL` to your public HTTPS origin, for example `https://meet.example.com` (no path or query). Configure your domain, TLS certificate, and reverse proxy to forward requests to `WEB_HOST:WEB_PORT` (by default `127.0.0.1:8087`). The files in `deploy/` are examples; replace the domain, certificate paths, and service user before using them. Never commit `.env`, the database, or its backups.
+4. From the project directory, check connectivity and start one polling process for the token:
 
 ```sh
 python3 -m bot_calendar --check
 python3 -m bot_calendar
 ```
 
-`--check` validates configuration and Telegram connectivity without polling. An existing webhook must be removed explicitly before long polling can start. New installations can leave `ORGANIZER_IDS` and `GROUP_CHAT_ID` empty and connect groups through the Mini App. Those variables are for bootstrapping a legacy single-group installation. `python3 -m bot_calendar --discover` enables ID discovery with `/whoami`.
+`--check` validates configuration and Telegram connectivity without polling or sending messages. An existing webhook must be removed explicitly before long polling can start. The bot reads `.env` from its working directory; existing environment variables take precedence. Keep the process running to receive updates and process deadlines.
+
+5. Open your bot's private chat, send `/start`, and open the Mini App. Choose the group where you are an administrator and the bot is already a member. If needed, use `/group` in the private chat to select it. Telegram verifies the administrator before connecting the group. New installations can leave `ORGANIZER_IDS` and `GROUP_CHAT_ID` empty.
+
+### Configuration
+
+| Variable | Purpose |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | Required token for your own bot. |
+| `WEBAPP_URL` | Public HTTPS origin for the Mini App. Leave empty to disable it. |
+| `WEB_HOST`, `WEB_PORT` | Mini App listen address and port; defaults are `127.0.0.1` and `8087`. Keep the listener behind your HTTPS reverse proxy. |
+| `WEBAPP_DIRECT_LINKS` | Set to `1` only after configuring the Main App in BotFather; defaults to `0`. |
+| `DATABASE_PATH` | SQLite database path; defaults to `data/bot.sqlite3`. Its parent directory must be writable. |
+| `REMINDER_LEAD_MINUTES` | Reminder lead time, from 1 to 10080 minutes; defaults to 60. |
+| `ORGANIZER_IDS`, `GROUP_CHAT_ID` | Optional legacy single-group bootstrap: comma-separated positive numeric organizer IDs and a negative group chat ID. Do not use usernames for authorization. |
+
+The text-based creation wizard is for the legacy configured group; use the Mini App for multiple groups and meetings. To discover IDs, run `python3 -m bot_calendar --discover`, send `/whoami` in the private chat and `/whoami@your_bot_username` in the group, then stop discovery before starting normal polling. Discovery requires the token and only one polling process may run at a time.
 
 For direct Mini App links, configure the bot's Main App in BotFather with the same `WEBAPP_URL` and set `WEBAPP_DIRECT_LINKS=1`. Without it, links open the bot's private chat first.
 
@@ -35,7 +61,17 @@ python3 -m bot_calendar.web --port 8087
 # Open http://127.0.0.1:8087/?preview=1
 ```
 
-The preview uses sample data. The server verifies Telegram Mini App init data before accepting authenticated requests. Keep the database and backups private; preserve the database across updates. Before a schema upgrade, stop the service and make a consistent SQLite backup. The current schema is version 3; older code cannot read it.
+The preview requires a valid-looking token in `.env` and a writable database path; it initializes the configured database but does not poll Telegram. Use a separate `DATABASE_PATH` for a disposable preview. Its sample interface does not submit real answers. The server verifies Telegram Mini App init data before accepting authenticated requests.
+
+### Persistence and updates
+
+Keep the database and backups private, and preserve the database across updates. To make a consistent backup using SQLite's backup API (replace the paths if configured differently):
+
+```sh
+python3 -c 'import sqlite3; src=sqlite3.connect("data/bot.sqlite3"); dst=sqlite3.connect("data/backup.sqlite3"); src.backup(dst); dst.close(); src.close()'
+```
+
+Stop the service and back up the database before a schema upgrade. The current schema is version 3; older code cannot read it. The example systemd unit in `deploy/bot-calendar.service` must be adapted to your user, project directory, and writable data directory before installation.
 
 ## Tests
 
